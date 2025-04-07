@@ -2,7 +2,7 @@ from mesa import Model, Agent
 from mesa.time import RandomActivation
 from mesa.space import MultiGrid
 from mesa.datacollection import DataCollector
-from mesa.visualization.modules import ChartModule
+from mesa.visualization.modules import ChartModule, CanvasGrid, TextElement
 from mesa.visualization.ModularVisualization import ModularServer
 import random
 
@@ -209,23 +209,32 @@ class CityModel(Model):
 
     def adjust_taxi_supply(self):
         if self.num_rides > 0:
+            if self.extra_taxis:
+                print("Removing extra taxis from previous day.")
+                for taxi in self.extra_taxis:
+                    self.schedule.remove(taxi)
+                    self.grid.remove_agent(taxi)
+                self.extra_taxis = []
+
             avg_wait = self.total_waiting_time / self.num_rides
             print(f"Day {self.day} average waiting time: {avg_wait:.2f} ticks.")
-            if avg_wait > 60:
-                print("High waiting time—adding extra taxis for next day.")
-                for i in range(2):
+            
+            hour_threshold = self.ticks_per_day / 24
+            
+            if avg_wait > hour_threshold:
+                scale_factor = min(5, max(1, int(avg_wait / hour_threshold)))
+                taxis_to_add = scale_factor * 2
+                
+                print(f"High waiting time (scale factor {scale_factor})—adding {taxis_to_add} extra taxis for next day.")
+                
+                for i in range(taxis_to_add):
                     taxi = TaxiAgent(unique_id=f"ExtraTaxi-{self.day}-{i}", model=self)
                     x = self.random.randrange(self.width)
                     y = self.random.randrange(self.height)
                     self.grid.place_agent(taxi, (x, y))
                     self.schedule.add(taxi)
                     self.extra_taxis.append(taxi)
-        if self.extra_taxis:
-            print("Removing extra taxis from previous day.")
-            for taxi in self.extra_taxis:
-                self.schedule.remove(taxi)
-                self.grid.remove_agent(taxi)
-            self.extra_taxis = []
+
         self.total_waiting_time = 0
         self.num_rides = 0
 
@@ -239,17 +248,73 @@ class CityModel(Model):
             self.adjust_taxi_supply()
             self.day += 1
 
+def agent_portrayal(agent):
+    portrayal = {"Shape": "circle", "Filled": "true", "r": 0.5}
+    
+    if isinstance(agent, TaxiAgent):
+        portrayal["Color"] = "yellow"
+        portrayal["Layer"] = 1
+        if agent.state == "to_pickup":
+            portrayal["Color"] = "orange"
+        elif agent.state == "to_destination":
+            portrayal["Color"] = "green"
+            
+    elif isinstance(agent, ResidentAgent):
+        portrayal["Color"] = "blue"
+        portrayal["Layer"] = 0
+        if agent.state == "waiting":
+            portrayal["Color"] = "red"
+        elif agent.state == "in_transit":
+            portrayal["Color"] = "purple"
+        elif agent.state == "visiting":
+            portrayal["Color"] = "cyan"
+        elif agent.hosting:
+            portrayal["Color"] = "magenta"
+    
+    return portrayal
+
 chart = ChartModule([
     {"Label": "Average Waiting Time", "Color": "Black"},
     {"Label": "Total Rides", "Color": "Blue"},
     {"Label": "Current Taxis", "Color": "Red"}
 ])
 
+class StatsElement(TextElement):
+    def __init__(self):
+        pass
+    
+    def render(self, model):
+        avg_wait = model.total_waiting_time / model.num_rides if model.num_rides > 0 else 0
+        taxi_count = sum(1 for a in model.schedule.agents if isinstance(a, TaxiAgent))
+        resident_count = sum(1 for a in model.schedule.agents if isinstance(a, ResidentAgent))
+        waiting_count = len(model.waiting_requests)
+        
+        stats = f"""
+        <table style="width:100%; border-collapse: collapse; margin-top: 15px;">
+            <tr><th style="border: 1px solid black; padding: 8px; text-align: left;">Statistic</th><th style="border: 1px solid black; padding: 8px; text-align: right;">Value</th></tr>
+            <tr><td style="border: 1px solid black; padding: 8px;">Current Day</td><td style="border: 1px solid black; padding: 8px; text-align: right;">{model.day}</td></tr>
+            <tr><td style="border: 1px solid black; padding: 8px;">Current Tick</td><td style="border: 1px solid black; padding: 8px; text-align: right;">{model.current_tick}</td></tr>
+            <tr><td style="border: 1px solid black; padding: 8px;">Average Waiting Time</td><td style="border: 1px solid black; padding: 8px; text-align: right;">{avg_wait:.2f}</td></tr>
+            <tr><td style="border: 1px solid black; padding: 8px;">Total Rides</td><td style="border: 1px solid black; padding: 8px; text-align: right;">{model.num_rides}</td></tr>
+            <tr><td style="border: 1px solid black; padding: 8px;">Active Taxis</td><td style="border: 1px solid black; padding: 8px; text-align: right;">{taxi_count}</td></tr>
+            <tr><td style="border: 1px solid black; padding: 8px;">Residents</td><td style="border: 1px solid black; padding: 8px; text-align: right;">{resident_count}</td></tr>
+            <tr><td style="border: 1px solid black; padding: 8px;">Waiting Requests</td><td style="border: 1px solid black; padding: 8px; text-align: right;">{waiting_count}</td></tr>
+        </table>
+        """
+        return stats
+
+stats_element = StatsElement()
+
+width = 500
+height = 500
+
+grid = CanvasGrid(agent_portrayal, width, height, 500, 500)
+
 server = ModularServer(
     CityModel,
-    [chart],
+    [grid, stats_element, chart],
     "City Taxi Simulation",
-    {"width": 20, "height": 20, "initial_taxis": 5, "initial_residents": 10, "ticks_per_day": 20}
+    {"width": width, "height": height, "initial_taxis": 5, "initial_residents": 47, "ticks_per_day": 576}
 )
 server.port = 8521
 
