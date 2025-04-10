@@ -6,10 +6,30 @@ from mesa.visualization.modules import ChartModule, CanvasGrid, TextElement
 from mesa.visualization.ModularVisualization import ModularServer
 import random
 
+
+def real_time_to_ticks(real_time_in_hours: int, ticks_per_day: int):
+    ticks_per_hour = ticks_per_day / 24
+
+    return real_time_in_hours * ticks_per_hour
+
+
+def calculate_speed_per_tick(kms_per_hour: int, ticks_per_day: int, kms_in_border: int = 1):
+    ticks_per_hour = real_time_to_ticks(1, ticks_per_day)
+    kms_per_tick = (kms_per_hour * kms_in_border) / ticks_per_hour
+
+    return kms_per_tick
+
+
+TAXI_SPEED_KMS_PER_HOUR = 60
+ticks_per_day = 576
+
+HALF_HOUR_IN_TICKS = round(real_time_to_ticks(0.5, ticks_per_day))
+ONE_HOUR_IN_TICKS = round(real_time_to_ticks(1, ticks_per_day))
+THREE_HOURS_IN_TICKS = round(real_time_to_ticks(3, ticks_per_day))
+
+
 class TaxiAgent(Agent):
     """
-    Taxi agent assigned by a dispatcher.
-    
     States:
     - "idle": available.
     - "to_pickup": en route to pick up a waiting visitor.
@@ -20,6 +40,8 @@ class TaxiAgent(Agent):
         self.state = "idle"
         self.assigned_request = None
         self.rides_conducted = 0
+        self.speed = round(calculate_speed_per_tick(TAXI_SPEED_KMS_PER_HOUR, ticks_per_day))
+
 
     def move_toward(self, target):
         """
@@ -28,16 +50,29 @@ class TaxiAgent(Agent):
         current_x, current_y = self.pos
         target_x, target_y = target
         new_x, new_y = current_x, current_y
-        if current_x < target_x:
-            new_x += 1
-        elif current_x > target_x:
-            new_x -= 1
-        if current_y < target_y:
-            new_y += 1
-        elif current_y > target_y:
-            new_y -= 1
-        new_pos = (new_x, new_y)
-        self.model.grid.move_agent(self, new_pos)
+
+        distance_to_target = abs(current_x - target_x) + abs(current_y - target_y)
+        
+        if distance_to_target < self.speed:
+            self.model.grid.move_agent(self, target)
+            return
+        
+        borders_to_traverse = self.speed
+
+        while borders_to_traverse > 0:
+            if new_x < target_x:
+                new_x += 1
+            elif new_x > target_x:
+                new_x -= 1
+            if new_y < target_y:
+                new_y += 1
+            elif new_y > target_y:
+                new_y -= 1
+
+            borders_to_traverse -= 1
+            new_pos = (new_x, new_y)
+            self.model.grid.move_agent(self, new_pos)
+
 
     def step(self):
         if self.state == "to_pickup":
@@ -58,7 +93,7 @@ class TaxiAgent(Agent):
                 print(f"{self.unique_id} dropped off {self.assigned_request.unique_id} at {target}.")
                 resident = self.assigned_request
                 resident.state = "visiting"
-                resident.visit_timer = random.randint(30, 180)
+                resident.visit_timer = random.randint(HALF_HOUR_IN_TICKS, THREE_HOURS_IN_TICKS)
                 resident.visits_made += 1
                 if resident.destination_host is not None:
                     host = resident.destination_host
@@ -68,10 +103,9 @@ class TaxiAgent(Agent):
                 self.assigned_request = None
                 self.state = "idle"
 
+
 class ResidentAgent(Agent):
     """
-    Resident agent that may initiate a visit or host a guest.
-    
     States:
     - "idle": at home, not in transit.
     - "waiting": requested a taxi to start a visit.
@@ -90,6 +124,7 @@ class ResidentAgent(Agent):
         self.visits_hosted = 0
         self.hosting = False
 
+
     def step(self):
         if self.state == "visiting":
             self.visit_timer -= 1
@@ -104,6 +139,7 @@ class ResidentAgent(Agent):
             if self.random.random() < 0.1:
                 self.initiate_visit()
 
+
     def initiate_visit(self):
         potential_hosts = [
             agent for agent in self.model.schedule.agents 
@@ -117,6 +153,7 @@ class ResidentAgent(Agent):
             self.state = "waiting"
             self.model.waiting_requests.append(self)
             print(f"{self.unique_id} at {self.pos} requests a taxi to visit {host.unique_id} at {host.pos}.")
+
 
 class CityModel(Model):
     """
@@ -160,6 +197,7 @@ class CityModel(Model):
         self._create_taxis()
         self._create_residents()
 
+
     def _create_taxis(self):
         for i in range(self.initial_taxis):
             taxi = TaxiAgent(unique_id=f"Taxi-{i}", model=self)
@@ -167,6 +205,7 @@ class CityModel(Model):
             y = self.random.randrange(self.height)
             self.grid.place_agent(taxi, (x, y))
             self.schedule.add(taxi)
+
 
     def _create_residents(self):
         for i in range(self.initial_residents):
@@ -181,6 +220,7 @@ class CityModel(Model):
                     self.schedule.add(resident)
                     placed = True
 
+
     def dispatch_taxis(self):
         for resident in self.waiting_requests[:]:
             if resident.state != "waiting":
@@ -193,6 +233,7 @@ class CityModel(Model):
                 resident.state = "in_transit"
                 self.waiting_requests.remove(resident)
                 print(f"Dispatcher assigned {taxi.unique_id} to {resident.unique_id}.")
+
 
     def find_nearest_taxi(self, resident):
         resident_pos = resident.pos
@@ -207,24 +248,26 @@ class CityModel(Model):
                     nearest_taxi = agent
         return nearest_taxi
 
+
     def adjust_taxi_supply(self):
         if self.num_rides > 0:
-            if self.extra_taxis:
-                print("Removing extra taxis from previous day.")
-                for taxi in self.extra_taxis:
-                    self.schedule.remove(taxi)
-                    self.grid.remove_agent(taxi)
-                self.extra_taxis = []
+            # if self.extra_taxis:
+            #     print("Removing extra taxis from previous day.")
+            #     for taxi in self.extra_taxis:
+            #         self.schedule.remove(taxi)
+            #         self.grid.remove_agent(taxi)
+            #     self.extra_taxis = []
+
 
             avg_wait = self.total_waiting_time / self.num_rides
             print(f"Day {self.day} average waiting time: {avg_wait:.2f} ticks.")
             
-            hour_threshold = self.ticks_per_day / 24
+            hour_threshold = ONE_HOUR_IN_TICKS
             
             if avg_wait > hour_threshold:
                 scale_factor = min(5, max(1, int(avg_wait / hour_threshold)))
                 taxis_to_add = scale_factor * 2
-                
+
                 print(f"High waiting time (scale factor {scale_factor})—adding {taxis_to_add} extra taxis for next day.")
                 
                 for i in range(taxis_to_add):
@@ -238,6 +281,7 @@ class CityModel(Model):
         self.total_waiting_time = 0
         self.num_rides = 0
 
+
     def step(self):
         self.schedule.step()
         self.dispatch_taxis()
@@ -248,9 +292,10 @@ class CityModel(Model):
             self.adjust_taxi_supply()
             self.day += 1
 
+
 def agent_portrayal(agent):
     portrayal = {"Shape": "circle", "Filled": "true", "r": 0.5}
-    
+
     if isinstance(agent, TaxiAgent):
         portrayal["Color"] = "yellow"
         portrayal["Layer"] = 1
@@ -258,7 +303,6 @@ def agent_portrayal(agent):
             portrayal["Color"] = "orange"
         elif agent.state == "to_destination":
             portrayal["Color"] = "green"
-            
     elif isinstance(agent, ResidentAgent):
         portrayal["Color"] = "blue"
         portrayal["Layer"] = 0
@@ -273,16 +317,19 @@ def agent_portrayal(agent):
     
     return portrayal
 
+
 chart = ChartModule([
     {"Label": "Average Waiting Time", "Color": "Black"},
     {"Label": "Total Rides", "Color": "Blue"},
     {"Label": "Current Taxis", "Color": "Red"}
 ])
 
+
 class StatsElement(TextElement):
     def __init__(self):
         pass
     
+
     def render(self, model):
         avg_wait = model.total_waiting_time / model.num_rides if model.num_rides > 0 else 0
         taxi_count = sum(1 for a in model.schedule.agents if isinstance(a, TaxiAgent))
@@ -303,23 +350,27 @@ class StatsElement(TextElement):
         """
         return stats
 
+
 stats_element = StatsElement()
 
-width = 500
-height = 500
+width = 40
+height = 40
+initial_taxis = 5
+initial_residents = 47
 
-grid = CanvasGrid(agent_portrayal, width, height, 500, 500)
+grid = CanvasGrid(agent_portrayal, width, height, 400, 400)
 
 server = ModularServer(
     CityModel,
     [grid, stats_element, chart],
     "City Taxi Simulation",
-    {"width": width, "height": height, "initial_taxis": 5, "initial_residents": 47, "ticks_per_day": 576}
+    {"width": width, "height": height, "initial_taxis": initial_taxis, "initial_residents": initial_residents, "ticks_per_day": ticks_per_day}
 )
 server.port = 8521
 
+
 if __name__ == "__main__":
-    # model = CityModel(width=20, height=20, initial_taxis=5, initial_residents=10, ticks_per_day=20)
+    # model = CityModel(width=width, height=height, initial_taxis=initial_taxis, initial_residents=initial_residents, ticks_per_day=ticks_per_day)
     # for i in range(40):
     #     model.step()
 
