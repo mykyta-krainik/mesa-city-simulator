@@ -90,15 +90,22 @@ class TaxiAgent(Agent):
             if self.pos != target:
                 self.move_toward(target)
             else:
-                print(f"{self.unique_id} dropped off {self.assigned_request.unique_id} at {target}.")
                 resident = self.assigned_request
-                resident.state = "visiting"
-                resident.visit_timer = random.randint(HALF_HOUR_IN_TICKS, THREE_HOURS_IN_TICKS)
-                resident.visits_made += 1
-                if resident.destination_host is not None:
-                    host = resident.destination_host
-                    host.hosting = True
-                    host.visits_hosted += 1
+                is_returning_home = resident.destination == resident.home_pos
+
+                if is_returning_home:
+                    print(f"{self.unique_id} dropped off {resident.unique_id} at home.")
+                    resident.state = "idle"
+                else:
+                    print(f"{self.unique_id} dropped off {resident.unique_id} at {target}.")
+                    resident.state = "visiting"
+                    resident.visit_timer = random.randint(HALF_HOUR_IN_TICKS, THREE_HOURS_IN_TICKS)
+                    resident.visits_made += 1
+                    if resident.destination_host is not None:
+                        host = resident.destination_host
+                        host.hosting = True
+                        host.visits_hosted += 1
+                
                 self.rides_conducted += 1
                 self.assigned_request = None
                 self.state = "idle"
@@ -123,18 +130,22 @@ class ResidentAgent(Agent):
         self.visits_made = 0
         self.visits_hosted = 0
         self.hosting = False
+        self.home_pos = None
 
 
     def step(self):
         if self.state == "visiting":
             self.visit_timer -= 1
             if self.visit_timer <= 0:
-                print(f"{self.unique_id} finished visiting and returns home.")
-                self.state = "idle"
+                print(f"{self.unique_id} finished visiting and requests a taxi to return home.")
+                self.destination = self.home_pos
+                self.state = "waiting"
+                self.request_time = self.model.current_tick
+                self.model.waiting_requests.append(self)
+
                 if self.destination_host is not None:
                     self.destination_host.hosting = False
                     self.destination_host = None
-                self.destination = None
         elif self.state == "idle" and not self.hosting:
             if self.random.random() < 0.1:
                 self.initiate_visit()
@@ -157,13 +168,9 @@ class ResidentAgent(Agent):
 
 class CityModel(Model):
     """
-    A MESA model for a city where residents visit each other and taxis are dispatched.
-    
-    Features:
     - MultiGrid with each cell as a block.
     - Residents placed on unique cells.
     - RandomActivation scheduler.
-    - Data collection and visualization with ChartModule.
     - Daily cycle with taxi supply adjustment.
     """
     def __init__(self, width=140, height=170, initial_taxis=50, initial_residents=470, ticks_per_day=100, seed=None):
@@ -219,6 +226,7 @@ class CityModel(Model):
                     self.grid.place_agent(resident, (x, y))
                     self.schedule.add(resident)
                     placed = True
+                    resident.home_pos = (x, y)
 
 
     def dispatch_taxis(self):
@@ -253,10 +261,13 @@ class CityModel(Model):
         if self.num_rides > 0:
             # if self.extra_taxis:
             #     print("Removing extra taxis from previous day.")
-            #     for taxi in self.extra_taxis:
-            #         self.schedule.remove(taxi)
-            #         self.grid.remove_agent(taxi)
-            #     self.extra_taxis = []
+            #     for taxi in self.extra_taxis[:]:
+            #         if taxi.state == "idle":  # Only remove idle taxis
+            #             self.schedule.remove(taxi)
+            #             self.grid.remove_agent(taxi)
+            #             self.extra_taxis.remove(taxi)
+            #         else:
+            #             print(f"Cannot remove {taxi.unique_id} because it's in {taxi.state} state")
 
 
             avg_wait = self.total_waiting_time / self.num_rides
@@ -313,7 +324,7 @@ def agent_portrayal(agent):
         elif agent.state == "visiting":
             portrayal["Color"] = "cyan"
         elif agent.hosting:
-            portrayal["Color"] = "magenta"
+            portrayal["Color"] = "black"
     
     return portrayal
 
