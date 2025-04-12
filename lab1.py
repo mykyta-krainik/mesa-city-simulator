@@ -5,6 +5,7 @@ from mesa.datacollection import DataCollector
 from mesa.visualization.modules import ChartModule, CanvasGrid, TextElement
 from mesa.visualization.ModularVisualization import ModularServer
 import random
+import heapq
 
 
 def real_time_to_ticks(real_time_in_hours: int, ticks_per_day: int):
@@ -20,7 +21,7 @@ def calculate_speed_per_tick(kms_per_hour: int, ticks_per_day: int, kms_in_borde
     return kms_per_tick
 
 
-TAXI_SPEED_KMS_PER_HOUR = 60
+TAXI_SPEED_KMS_PER_HOUR = 120
 ticks_per_day = 576
 
 HALF_HOUR_IN_TICKS = round(real_time_to_ticks(0.5, ticks_per_day))
@@ -141,7 +142,7 @@ class ResidentAgent(Agent):
                 self.destination = self.home_pos
                 self.state = "waiting"
                 self.request_time = self.model.current_tick
-                self.model.waiting_requests.append(self)
+                self.model.add_request_to_queue(self)
 
                 if self.destination_host is not None:
                     self.destination_host.hosting = False
@@ -162,7 +163,7 @@ class ResidentAgent(Agent):
             self.destination = host.pos
             self.request_time = self.model.current_tick
             self.state = "waiting"
-            self.model.waiting_requests.append(self)
+            self.model.add_request_to_queue(self)
             print(f"{self.unique_id} at {self.pos} requests a taxi to visit {host.unique_id} at {host.pos}.")
 
 
@@ -183,7 +184,7 @@ class CityModel(Model):
 
         self.grid = MultiGrid(width=self.width, height=self.height, torus=False)
         self.schedule = RandomActivation(self)
-        self.waiting_requests = []
+        self.request_priority_queue = []
 
         self.total_waiting_time = 0
         self.num_rides = 0
@@ -203,6 +204,18 @@ class CityModel(Model):
 
         self._create_taxis()
         self._create_residents()
+
+
+    def add_request_to_queue(self, resident):
+        request_time = resident.request_time
+        
+        priority_boost = 5 if resident.visits_made < 2 else 0
+        priority = request_time - priority_boost
+
+        unique_id = int(resident.unique_id.split('-')[1])
+        heapq.heappush(self.request_priority_queue, (priority, request_time, resident.visits_made, unique_id, resident))
+        
+        print(f"Added request from {resident.unique_id} with priority {priority} (visits: {resident.visits_made})")
 
 
     def _create_taxis(self):
@@ -230,17 +243,31 @@ class CityModel(Model):
 
 
     def dispatch_taxis(self):
-        for resident in self.waiting_requests[:]:
+        available_taxis = [agent for agent in self.schedule.agents 
+                         if isinstance(agent, TaxiAgent) and agent.state == "idle"]
+        
+        if not available_taxis:
+            return
+              
+        while self.request_priority_queue and available_taxis:
+            priority, request_time, visits_made, unique_id, resident = heapq.heappop(self.request_priority_queue)
+            
             if resident.state != "waiting":
-                self.waiting_requests.remove(resident)
                 continue
-            taxi = self.find_nearest_taxi(resident)
-            if taxi:
-                taxi.assigned_request = resident
-                taxi.state = "to_pickup"
+                  
+            nearest_taxi = self.find_nearest_taxi(resident)
+            if nearest_taxi:
+                nearest_taxi.assigned_request = resident
+                nearest_taxi.state = "to_pickup"
                 resident.state = "in_transit"
-                self.waiting_requests.remove(resident)
-                print(f"Dispatcher assigned {taxi.unique_id} to {resident.unique_id}.")
+                      
+                print(f"Dispatcher assigned {nearest_taxi.unique_id} to {resident.unique_id} (visit count: {resident.visits_made}).")
+                  
+                available_taxis.remove(nearest_taxi)
+            else:
+                request_time = resident.request_time
+                heapq.heappush(self.request_priority_queue, (priority, request_time, visits_made, unique_id, resident))
+                break
 
 
     def find_nearest_taxi(self, resident):
@@ -259,17 +286,6 @@ class CityModel(Model):
 
     def adjust_taxi_supply(self):
         if self.num_rides > 0:
-            # if self.extra_taxis:
-            #     print("Removing extra taxis from previous day.")
-            #     for taxi in self.extra_taxis[:]:
-            #         if taxi.state == "idle":  # Only remove idle taxis
-            #             self.schedule.remove(taxi)
-            #             self.grid.remove_agent(taxi)
-            #             self.extra_taxis.remove(taxi)
-            #         else:
-            #             print(f"Cannot remove {taxi.unique_id} because it's in {taxi.state} state")
-
-
             avg_wait = self.total_waiting_time / self.num_rides
             print(f"Day {self.day} average waiting time: {avg_wait:.2f} ticks.")
             
@@ -345,7 +361,16 @@ class StatsElement(TextElement):
         avg_wait = model.total_waiting_time / model.num_rides if model.num_rides > 0 else 0
         taxi_count = sum(1 for a in model.schedule.agents if isinstance(a, TaxiAgent))
         resident_count = sum(1 for a in model.schedule.agents if isinstance(a, ResidentAgent))
-        waiting_count = len(model.waiting_requests)
+        waiting_count = len(model.request_priority_queue)
+        
+        waiting_info = ""
+        if model.request_priority_queue:
+            queue_copy = model.request_priority_queue.copy()
+            waiting_info = "<tr><td colspan='2' style='border: 1px solid black; padding: 8px;'><b>Top 3 Waiting Requests:</b></td></tr>"
+            for i in range(min(3, len(queue_copy))):
+                if queue_copy:
+                    priority, request_time, visits_made, id, resident = heapq.heappop(queue_copy)
+                    waiting_info += f"<tr><td style='border: 1px solid black; padding: 8px;'>Request {i+1}</td><td style='border: 1px solid black; padding: 8px; text-align: right;'>{resident.unique_id} (Request time: {request_time}, Visits: {visits_made})</td></tr>"
         
         stats = f"""
         <table style="width:100%; border-collapse: collapse; margin-top: 15px;">
@@ -357,6 +382,7 @@ class StatsElement(TextElement):
             <tr><td style="border: 1px solid black; padding: 8px;">Active Taxis</td><td style="border: 1px solid black; padding: 8px; text-align: right;">{taxi_count}</td></tr>
             <tr><td style="border: 1px solid black; padding: 8px;">Residents</td><td style="border: 1px solid black; padding: 8px; text-align: right;">{resident_count}</td></tr>
             <tr><td style="border: 1px solid black; padding: 8px;">Waiting Requests</td><td style="border: 1px solid black; padding: 8px; text-align: right;">{waiting_count}</td></tr>
+            {waiting_info}
         </table>
         """
         return stats
