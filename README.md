@@ -1,58 +1,88 @@
-# City Taxi Simulation
+# City Taxi Simulation with Economic Model
 
-A Mesa-based agent simulation modeling a taxi dispatch system in a city environment.
-
-## Overview
-
-This simulation models the interactions between taxis and residents in a city grid. Residents request taxi rides to visit other residents, and taxis are dispatched to fulfill these requests based on proximity and priority.
+This project simulates a taxi company serving residents in a city grid. It models taxi operations, passenger economics, and company finances over time.
 
 ## Features
 
-- Dynamic taxi dispatch system with priority queue
-- Residents that visit other residents and return home
-- Automatic taxi supply adjustment based on waiting times
-- Data collection and visualization of key metrics
+- **Company Economics**: Tracks capital, income, expenses, and asset values
+- **Passenger Economics**: Each resident starts with 100 c.u. and earns 50 c.u. daily
+- **Satisfaction Metrics**: Tracks waiting time and cancellation rates
+- **Strategy Optimization**: Finds optimal fleet size, pricing, and markup
 
-## Agents
+## Components
 
-### Taxi Agent
-
-- States: idle, to_pickup, to_destination
-- Moves toward pickup locations and destinations
-- Tracks rides conducted
-
-### Resident Agent
-
-- States: idle, waiting, in_transit, visiting, hosting
-- Makes visit requests to other residents
-- Tracks visits made and visits hosted
-
-## Model Parameters
-
-- Grid size (width × height)
-- Initial number of taxis
-- Initial number of residents
-- Ticks per day (time scale)
-- Taxi speed (120 km/h by default)
-
-## Visualization
-
-The simulation includes:
-- Grid display showing agent positions and states
-- Chart for tracking metrics (waiting time, total rides, number of taxis)
-- Statistics panel showing current simulation state
+1. `lab1.py` - Main simulation module
+2. `strategy_optimizer.py` - Optimizes taxi company strategy
+3. `run_optimization.py` - Command-line tool to run optimization
 
 ## Running the Simulation
 
-To run the simulation:
+### Visual Simulation
 
-```python
-python lab1.py
+To run the visual simulation server:
+
+```bash
+python lab1.py --server
 ```
 
-This will launch a web server on port 8521. Open a browser and navigate to <http://localhost:8521> to view the simulation.
+Additional parameters:
+```bash
+python lab1.py --server --width 40 --height 40 --taxis 5 --residents 47 --km_fare 8 --markup 1.2 --capital 150000 --verbose
+```
 
-## Requirements
+Note: By default, the server runs without detailed logging to improve performance. Add the `--verbose` flag to display detailed logs.
 
-- Mesa 3.0.3
-- Python 3.x (3.12.5 in our case)
+### Command-line Simulation
+
+To run a fixed number of days without visualization:
+
+```bash
+python lab1.py --days 30 --taxis 5 --km_fare 8 --markup 1.2
+```
+
+### Optimization
+
+To find the optimal strategy:
+
+```bash
+python run_optimization.py
+```
+
+With custom parameters:
+```bash
+python run_optimization.py --min_fleet 3 --max_fleet 10 --min_fare 5 --max_fare 15 --min_markup 1.0 --max_markup 2.0 --days 365
+```
+
+## Model Parameters
+
+- **Fleet Size**: Number of taxis in operation
+- **Km Fare**: Price charged to passengers per kilometer
+- **Deadhead Markup**: Markup factor for dead-head (to pickup) distance
+- **Initial Capital**: Company's starting capital (default: 150,000 c.u.)
+
+## Economic Factors
+
+- Vehicle purchase price: 15,000 c.u.
+- Vehicle resale value: 9,000 c.u.
+- Operating cost per km: 2.5 c.u.
+- Resident starting balance: 100 c.u.
+- Resident daily income: 50 c.u.
+
+## Strategy Optimization
+
+The strategy optimizer runs simulations across parameter ranges:
+- Fleet size (e.g., 3-10 taxis)
+- Fare per km (e.g., 5-15 c.u.)
+- Deadhead markup (e.g., 1.0-2.0)
+
+It finds the strategy that:
+1. Maintains the target capital (≥ 150,000 c.u.)
+2. Minimizes cancellation rates
+3. Maximizes company profit
+
+## Output
+
+The optimization produces:
+- Detailed parameter analysis
+- Visualizations of results
+- Optimal strategy recommendation
