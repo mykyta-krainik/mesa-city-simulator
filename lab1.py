@@ -44,9 +44,8 @@ class TaxiAgent(Agent):
         self.rides_conducted = 0
         self.speed = round(calculate_speed_per_tick(TAXI_SPEED_KMS_PER_HOUR, ticks_per_day))
         
-        # Track distances for cost calculation
-        self.total_distance = 0  # Total distance traveled in km
-        self.pickup_distance = 0  # Distance to pickup current passenger
+        self.total_distance = 0
+        self.pickup_distance = 0
 
 
     def move_toward(self, target):
@@ -59,18 +58,14 @@ class TaxiAgent(Agent):
 
         distance_to_target = abs(current_x - target_x) + abs(current_y - target_y)
         
-        # Calculate actual move distance (limited by speed)
         move_distance = min(distance_to_target, self.speed)
         
-        # Track the distance for cost calculation
         self.total_distance += move_distance
         
-        # Update company expenses for this movement
         movement_cost = move_distance * self.model.cost_per_km
         self.model.company_capital -= movement_cost
         self.model.total_expenses += movement_cost
         
-        # If in to_pickup state, track pickup distance separately 
         if self.state == "to_pickup":
             self.pickup_distance += move_distance
         
@@ -105,10 +100,8 @@ class TaxiAgent(Agent):
                 self.model.total_waiting_time += waiting_time
                 self.model.num_rides += 1
                 
-                # Resident pays for ride at pickup
                 self.assigned_request.pay_for_ride()
                 
-                # Reset pickup distance counter
                 self.pickup_distance = 0
                 
                 self.model.log(f"{self.unique_id} picked up {self.assigned_request.unique_id} after waiting {waiting_time} ticks.")
@@ -160,12 +153,10 @@ class ResidentAgent(Agent):
         self.hosting = False
         self.home_pos = None
         
-        # Economic attributes
-        self.balance = 200  # Starting money
-        self.ride_fare = 0  # Current ride cost
+        self.balance = 200
+        self.ride_fare = 0
         
-        # Satisfaction metrics
-        self.satisfaction_metric = 0  # H metric
+        self.satisfaction_metric = 0
         self.cancelled_rides = 0
 
 
@@ -178,10 +169,8 @@ class ResidentAgent(Agent):
                 self.state = "waiting"
                 self.request_time = self.model.current_tick
                 
-                # Calculate fare before requesting taxi
                 self.calculate_ride_fare()
                 
-                # Only request taxi if can afford ride
                 if self.can_afford_ride():
                     self.model.add_request_to_queue(self)
                 else:
@@ -192,11 +181,9 @@ class ResidentAgent(Agent):
                     self.destination_host.hosting = False
                     self.destination_host = None
         elif self.state == "waiting":
-            # Check satisfaction metric H
             waiting_time = self.model.current_tick - self.request_time
             self.satisfaction_metric = waiting_time / ONE_HOUR_IN_TICKS
             
-            # If H > 1, cancel ride and return home
             if self.satisfaction_metric > 1:
                 self.model.log(f"{self.unique_id} cancelled ride due to long wait time (H={self.satisfaction_metric:.2f})")
                 self.cancelled_rides += 1
@@ -206,9 +193,8 @@ class ResidentAgent(Agent):
             if self.random.random() < 0.1:
                 self.initiate_visit()
                 
-        # Daily income
         if self.model.current_tick % self.model.ticks_per_day == 0:
-            self.balance += 50
+            self.balance += 150
             self.model.log(f"{self.unique_id} received daily income, new balance: {self.balance}")
 
 
@@ -225,16 +211,13 @@ class ResidentAgent(Agent):
             self.ride_fare = 0
             return
             
-        # Calculate distance to destination
         current_x, current_y = self.pos
         dest_x, dest_y = self.destination
         distance = abs(current_x - dest_x) + abs(current_y - dest_y)
         
-        # Each cell is treated as 1 km
         self.ride_fare = distance * self.model.km_fare
         self.model.log(f"{self.unique_id} ride fare calculated: {self.ride_fare} c.u. for {distance} km")
         
-        # Track for affordability metrics
         self.model.total_ride_requests += 1
 
 
@@ -242,7 +225,6 @@ class ResidentAgent(Agent):
         """Check if resident can afford the calculated fare"""
         can_afford = self.balance >= self.ride_fare
         
-        # Track affordability for fare adjustments
         if not can_afford:
             self.model.refused_rides_due_to_cost += 1
             
@@ -268,10 +250,8 @@ class ResidentAgent(Agent):
             self.destination_host = host
             self.destination = host.pos
             
-            # Calculate fare before requesting taxi
             self.calculate_ride_fare()
             
-            # Only request taxi if can afford ride
             if self.can_afford_ride():
                 self.request_time = self.model.current_tick
                 self.state = "waiting"
@@ -297,23 +277,20 @@ class CityModel(Model):
         self.initial_residents = initial_residents
         self.ticks_per_day = ticks_per_day
         
-        # Company finances
         self.company_capital = company_capital
         self.initial_capital = company_capital
-        self.target_capital = 150000  # Target capital after 2 years
+        self.target_capital = 150000
         self.vehicle_purchase_price = 15000
         self.vehicle_resale_value = 9000
         self.cost_per_km = 2.5
-        self.base_km_fare = km_fare  # Base price charged to passengers per km
-        self.deadhead_markup = deadhead_markup  # Markup for dead-head distance
+        self.base_km_fare = km_fare
+        self.deadhead_markup = deadhead_markup
         self.km_fare = self.calculate_effective_fare(km_fare, deadhead_markup)
         
-        # Financial tracking
         self.total_income = 0
         self.total_expenses = 0
         self.taxi_assets_value = 0
         
-        # Controls output verbosity
         self.verbose = verbose
         
         self.grid = MultiGrid(width=self.width, height=self.height, torus=False)
@@ -328,7 +305,6 @@ class CityModel(Model):
 
         self.extra_taxis = []
         
-        # Track fare affordability
         self.refused_rides_due_to_cost = 0
         self.total_ride_requests = 0
 
@@ -479,7 +455,6 @@ class CityModel(Model):
 
 
     def adjust_taxi_supply(self):
-        # Calculate current financial status
         total_assets = self.calculate_total_assets()
         self.log(f"Day {self.day} financial status:")
         self.log(f"  Capital: {self.company_capital:.2f} c.u.")
@@ -492,21 +467,18 @@ class CityModel(Model):
             avg_wait = self.total_waiting_time / self.num_rides
             self.log(f"Day {self.day} average waiting time: {avg_wait:.2f} ticks.")
             
-            # Calculate cancellation rate for the day
             cancelled_rides = sum(resident.cancelled_rides for resident in self.schedule.agents 
                                 if isinstance(resident, ResidentAgent))
             total_requests = self.num_rides + cancelled_rides
             cancellation_rate = cancelled_rides / total_requests if total_requests > 0 else 0
             self.log(f"Day {self.day} cancellation rate: {cancellation_rate:.2%}")
             
-            # Reset counters for next day
             for resident in self.schedule.agents:
                 if isinstance(resident, ResidentAgent):
                     resident.cancelled_rides = 0
             
             hour_threshold = ONE_HOUR_IN_TICKS
             
-            # Decide whether to add taxis based on waiting time and financial status
             if avg_wait > hour_threshold and self.company_capital >= self.vehicle_purchase_price * 2:
                 scale_factor = min(5, max(1, int(avg_wait / hour_threshold)))
                 taxis_to_add = min(scale_factor, self.company_capital // self.vehicle_purchase_price)
@@ -533,7 +505,6 @@ class CityModel(Model):
         self.datacollector.collect(self)
 
         if self.current_tick % 50 == 0:
-            # Recalculate fare at end of day
             self.recalculate_fare()
 
 
@@ -563,7 +534,6 @@ class CityModel(Model):
 
 
     def log(self, message):
-        """Print message only if verbose mode is enabled"""
         if self.verbose:
             print(message)
 
@@ -572,41 +542,31 @@ class CityModel(Model):
         """
         Calculate fare that covers operating costs and includes markup for deadhead distance
         """
-        # Ensure fare covers at least operating costs
         min_viable_fare = self.cost_per_km * 1.1  # 10% profit margin minimum
         
-        # Apply markup to account for deadhead trips
         effective_fare = max(base_fare, min_viable_fare) * (1 + (markup - 1) * 0.5)
         
-        # Balance fare based on company capital status
         if self.company_capital < self.initial_capital * 0.5:
-            # If company is losing money, increase fare
             effective_fare *= 1.1
         elif self.company_capital > self.initial_capital * 1.5:
-            # If company is making too much profit, make rides more affordable
             effective_fare *= 0.95
             
-        # Round to 2 decimal places for consistency
         return round(effective_fare, 2)
     
     def recalculate_fare(self):
         """Recalculate fare based on current conditions"""
-        # Get affordability metrics
         if self.total_ride_requests > 0:
             affordability_rate = 1 - (self.refused_rides_due_to_cost / self.total_ride_requests)
         else:
             affordability_rate = 1.0
             
-        # If many people can't afford rides, decrease fare slightly
         if affordability_rate < 0.8 and self.base_km_fare > self.cost_per_km * 1.2:
             self.base_km_fare = max(self.cost_per_km * 1.2, self.base_km_fare * 0.95)
             self.log(f"Decreasing fare due to low affordability ({affordability_rate:.2%})")
         
-        # Recalculate effective fare
         self.km_fare = self.calculate_effective_fare(self.base_km_fare, self.deadhead_markup)
         self.log(f"Recalculated fare: {self.km_fare} c.u./km (base: {self.base_km_fare}, markup: {self.deadhead_markup})")
     
-        # Reset counters
         self.refused_rides_due_to_cost = 0
         self.total_ride_requests = 0
 
@@ -647,15 +607,15 @@ class FinancialHeader(TextElement):
     def render(self, model):
         return "<h3>Financial Metrics</h3>"
 
+
 class RideHeader(TextElement):
     def render(self, model):
         return "<h3>Ride Metrics</h3>"
 
-# Create text headers for chart sections
+
 financial_header = FinancialHeader()
 ride_header = RideHeader()
 
-# Create two separate charts - one for financial metrics and one for ride metrics
 financial_chart = ChartModule([
     {"Label": "Company Capital", "Color": "Green"},
     {"Label": "Total Assets", "Color": "Purple"},
@@ -685,16 +645,13 @@ class StatsElement(TextElement):
         resident_count = sum(1 for a in model.schedule.agents if isinstance(a, ResidentAgent))
         waiting_count = len(model.request_priority_queue)
         
-        # Calculate satisfaction statistics
         satisfaction_values = [a.satisfaction_metric for a in model.schedule.agents 
                               if isinstance(a, ResidentAgent) and a.satisfaction_metric > 0]
         avg_satisfaction = sum(satisfaction_values) / len(satisfaction_values) if satisfaction_values else 0
         
-        # Calculate cancellation rate
         total_cancelled = sum(a.cancelled_rides for a in model.schedule.agents if isinstance(a, ResidentAgent))
         cancellation_rate = total_cancelled / (model.num_rides + total_cancelled) if (model.num_rides + total_cancelled) > 0 else 0
         
-        # Calculate affordability rate
         affordability_rate = model.get_affordability_rate()
         
         waiting_info = ""
@@ -773,11 +730,9 @@ if __name__ == "__main__":
     initial_taxis = args.taxis
     initial_residents = args.residents
     
-    # Set verbosity - always verbose in CLI mode, optional in server mode
     verbose = True if not args.server else args.verbose
     
     if args.server:
-        # Run visualization server
         server = ModularServer(
             CityModel,
             [grid, stats_element, financial_header, financial_chart, ride_header, ride_chart],
@@ -797,7 +752,6 @@ if __name__ == "__main__":
         server.port = 8521
         server.launch()
     else:
-        # Run model for specified number of days
         print(f"Running simulation for {args.days} days...")
         print(f"Parameters: Taxis={initial_taxis}, Residents={initial_residents}, Fare={args.km_fare}, Markup={args.markup}")
         
@@ -817,7 +771,6 @@ if __name__ == "__main__":
             for _ in range(model.ticks_per_day):
                 model.step()
                 
-            # Print daily summary
             total_assets = model.calculate_total_assets()
             waiting_count = len(model.request_priority_queue)
             
@@ -826,14 +779,12 @@ if __name__ == "__main__":
             print(f"  Assets: {total_assets:.2f} c.u.")
             print(f"  Waiting requests: {waiting_count}")
             
-        # Print final stats
         print("\nFinal statistics:")
         print(f"Company capital: {model.company_capital:.2f} c.u.")
         print(f"Total assets: {model.calculate_total_assets():.2f} c.u.")
         print(f"Total income: {model.total_income:.2f} c.u.")
         print(f"Total expenses: {model.total_expenses:.2f} c.u.")
         
-        # Calculate satisfaction statistics
         satisfaction_values = [agent.satisfaction_metric for agent in model.schedule.agents 
                               if isinstance(agent, ResidentAgent) and agent.satisfaction_metric > 0]
         

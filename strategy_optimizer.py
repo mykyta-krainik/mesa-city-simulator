@@ -4,12 +4,69 @@ import matplotlib.pyplot as plt
 from lab1 import CityModel
 import itertools
 import statistics
+import multiprocessing
+from concurrent.futures import ProcessPoolExecutor
+
+
+def run_simulation_for_parallel(args):
+    """
+        args: A tuple containing (i, params, optimizer_params) where:
+            i: Index of the simulation
+            params: A tuple of (fleet_size, fare, markup)
+            optimizer_params: A dict with optimizer configuration
+    """
+    i, (fleet_size, fare, markup), optimizer_params = args
+    total_combinations = optimizer_params['total_combinations']
+    
+    print(f"Running simulation {i+1}/{total_combinations}: "
+          f"Fleet={fleet_size}, Fare={fare:.2f}, Markup={markup:.2f}")
+    
+    model = CityModel(
+        width=optimizer_params['width'],
+        height=optimizer_params['height'],
+        initial_taxis=fleet_size,
+        initial_residents=optimizer_params['residents'],
+        ticks_per_day=optimizer_params['ticks_per_day'],
+        km_fare=fare,
+        deadhead_markup=markup,
+        company_capital=150000,
+        verbose=False
+    )
+    
+    for _ in range(optimizer_params['runtime_days']):
+        for _ in range(model.ticks_per_day):
+            model.step()
+            
+            if model.company_capital < 0:
+                break
+    
+    satisfaction_values = [agent.satisfaction_metric for agent in model.schedule.agents 
+                          if hasattr(agent, 'satisfaction_metric') and agent.satisfaction_metric > 0]
+    
+    result = {
+        'fleet_size': fleet_size,
+        'fare': fare,
+        'markup': markup,
+        'final_capital': model.calculate_total_assets(),
+        'company_capital': model.company_capital,
+        'total_income': model.total_income,
+        'total_expenses': model.total_expenses,
+        'cancellation_rate': model.get_cancellation_rate(),
+        'mean_satisfaction': statistics.mean(satisfaction_values) if satisfaction_values else 0,
+        'median_satisfaction': statistics.median(satisfaction_values) if satisfaction_values else 0,
+        'mode_satisfaction': statistics.mode(satisfaction_values) if satisfaction_values else 0
+    }
+    
+    print(f"Result for simulation {i+1}: Final capital={result['final_capital']:.2f}, "
+          f"Cancellation rate={result['cancellation_rate']:.2%}")
+    
+    return result
 
 
 class StrategyOptimizer:
     def __init__(self, width=40, height=40, residents=47, ticks_per_day=576, 
                  fleet_size_range=(2, 10), fare_range=(5, 15), markup_range=(1.0, 2.0),
-                 runtime_days=730):  # 2 years (730 days)
+                 runtime_days=2 * 365):
         
         self.width = width
         self.height = height
@@ -17,12 +74,10 @@ class StrategyOptimizer:
         self.ticks_per_day = ticks_per_day
         self.runtime_days = runtime_days
         
-        # Strategy parameter ranges
         self.fleet_size_range = fleet_size_range
         self.fare_range = fare_range
         self.markup_range = markup_range
         
-        # Results storage
         self.results = []
         
     
@@ -30,16 +85,16 @@ class StrategyOptimizer:
         """Run simulations for all parameter combinations"""
         fleet_sizes = range(self.fleet_size_range[0], self.fleet_size_range[1] + 1, fleet_step)
         
-        # Use numpy for fare range to support float steps
         fare_values = []
         current_fare = self.fare_range[0]
+
         while current_fare <= self.fare_range[1]:
             fare_values.append(current_fare)
             current_fare += fare_step
             
-        # Use numpy for markup range to support float steps    
         markup_values = []
         current_markup = self.markup_range[0]
+
         while current_markup <= self.markup_range[1]:
             markup_values.append(current_markup)
             current_markup += markup_step
@@ -51,7 +106,6 @@ class StrategyOptimizer:
             print(f"Running simulation {i+1}/{total_combinations}: "
                   f"Fleet={fleet_size}, Fare={fare:.2f}, Markup={markup:.2f}")
             
-            # Run simulation with these parameters
             result = self.run_simulation(fleet_size, fare, markup)
             self.results.append(result)
             
@@ -60,6 +114,49 @@ class StrategyOptimizer:
                   f"Mean satisfaction={result['mean_satisfaction']:.2f}, "
                   f"Median satisfaction={result['median_satisfaction']:.2f}, "
                   f"Mode satisfaction={result['mode_satisfaction']:.2f}")
+        
+        return self.results
+    
+    
+    def parameter_sweep_parallel(self, fleet_step=1, fare_step=0.5, markup_step=0.1, num_processes=None):
+        """Run simulations for all parameter combinations in parallel using multiprocessing"""
+        fleet_sizes = range(self.fleet_size_range[0], self.fleet_size_range[1] + 1, fleet_step)
+        
+        fare_values = []
+        current_fare = self.fare_range[0]
+        while current_fare <= self.fare_range[1]:
+            fare_values.append(current_fare)
+            current_fare += fare_step
+            
+        markup_values = []
+        current_markup = self.markup_range[0]
+        while current_markup <= self.markup_range[1]:
+            markup_values.append(current_markup)
+            current_markup += markup_step
+        
+        combinations = list(itertools.product(fleet_sizes, fare_values, markup_values))
+        total_combinations = len(combinations)
+        print(f"Running parallelized parameter sweep with {total_combinations} combinations...")
+        
+        if num_processes is None:
+            num_processes = multiprocessing.cpu_count()
+        print(f"Using {num_processes} processes")
+        
+        optimizer_params = {
+            'width': self.width,
+            'height': self.height,
+            'residents': self.residents,
+            'ticks_per_day': self.ticks_per_day,
+            'runtime_days': self.runtime_days,
+            'total_combinations': total_combinations
+        }
+        
+        args_list = [(i, params, optimizer_params) for i, params in enumerate(combinations)]
+        
+        with ProcessPoolExecutor(max_workers=num_processes) as executor:
+            results = list(executor.map(run_simulation_for_parallel, args_list))
+            
+        self.results = results
         
         return self.results
     
@@ -74,20 +171,17 @@ class StrategyOptimizer:
             ticks_per_day=self.ticks_per_day,
             km_fare=fare,
             deadhead_markup=markup,
-            company_capital=150000,  # Fixed starting capital
-            verbose=False  # Turn off verbose output during optimization
+            company_capital=150000,
+            verbose=False
         )
         
-        # Run for 2 years (730 days)
         for _ in range(self.runtime_days):
             for _ in range(model.ticks_per_day):
                 model.step()
                 
-                # Early stopping if company goes bankrupt
                 if model.company_capital < 0:
                     break
         
-        # Collect final metrics
         satisfaction_values = [agent.satisfaction_metric for agent in model.schedule.agents 
                               if hasattr(agent, 'satisfaction_metric') and agent.satisfaction_metric > 0]
         
@@ -125,7 +219,6 @@ class StrategyOptimizer:
                 return max(self.results, key=lambda x: x['final_capital'])
             return None
         
-        # Get strategy with highest capital that meets criteria
         optimal_strategy = viable_strategies[0]
         
         print("\nOptimal Strategy:")
@@ -147,10 +240,8 @@ class StrategyOptimizer:
             print("No results to visualize!")
             return
         
-        # Convert results to DataFrame for easier analysis
         df = pd.DataFrame(self.results)
         
-        # Plot capital vs fleet size and fare
         plt.figure(figsize=(15, 10))
         
         # Capital vs Fleet Size
@@ -203,29 +294,24 @@ class StrategyOptimizer:
         plt.savefig('strategy_analysis.png')
         plt.show()
         
-        # Get optimal strategy and plot its satisfaction histogram
         optimal = self.get_optimal_strategy()
         if optimal:
             print(f"Strategy analysis saved to strategy_analysis.png")
 
 
 if __name__ == "__main__":
-    # Example usage
     optimizer = StrategyOptimizer(
         width=40,
         height=40,
         residents=47,
-        ticks_per_day=576,  # Use lower value for faster testing
+        ticks_per_day=576,
         fleet_size_range=(5, 15),
         fare_range=(5, 15),
         markup_range=(1.0, 2.0),
     )
     
-    # Run a small parameter sweep for testing
-    optimizer.parameter_sweep(fleet_step=1, fare_step=0.5, markup_step=0.5)
+    optimizer.parameter_sweep_parallel(fleet_step=1, fare_step=0.5, markup_step=0.5)
     
-    # Find and display optimal strategy
     optimal = optimizer.get_optimal_strategy()
     
-    # Visualize results
     optimizer.visualize_results() 
